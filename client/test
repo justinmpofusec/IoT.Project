@@ -9,16 +9,22 @@ from datetime import datetime
 import json
 import threading
 import grovepi
+import math
 
-air_sensor = 0        #Port for air sensor
-ultrasonic_ranger = 6 #Port for ultrasonic ranger
-led = 2               #Port for LED
-buzzer_pin = 3        #Port for buzzer
+air_sensor = 0        # Port for air sensor
+temp_humidity_sensor = 4   # Port for DHT temp/humidity sensor
+ultrasonic_ranger = 6 # Port for ultrasonic ranger
+led = 2               # Port for LED
+buzzer_pin = 3        # Port for buzzer
 
-grovepi.pinMode(buzzer_pin,"OUTPUT")
-grovepi.pinMode(led,"OUTPUT")
+DHT_TYPE = 0   # try 0 first, if needed change to 1
+
+grovepi.pinMode(buzzer_pin, "OUTPUT")
+grovepi.pinMode(led, "OUTPUT")
 grovepi.pinMode(air_sensor, "INPUT")
-grovepi.digitalWrite(buzzer_pin,0)
+grovepi.digitalWrite(buzzer_pin, 0)
+grovepi.digitalWrite(led, 0)
+
 logging.config.fileConfig("clientLog.conf")
 
 with open('client_conf.json', 'r') as conf:
@@ -28,7 +34,7 @@ PRECISION = param['PRECISION']
 """
 HUMIDITY => in %
 TEMPERATURE => in °C
-PRESSURE => in bar
+PRESSURE => in mbar
 AIRQUALITY => a number between 0 and 900, the lower the better
 POSITIONX => in degree
 POSITIONY => in degree
@@ -36,6 +42,7 @@ POSITIONZ => in degree
 """
 
 sense = SenseHat()
+
 lastValue = {
     'humidity': -10000,
     'temperature': -10000,
@@ -54,19 +61,37 @@ positionX = -10000
 positionY = -10000
 positionZ = -10000
 lockThread = True
-setRGB(0,255,0)
+
+setRGB(0, 255, 0)
 setText("Do not MOVE or   LIFT the SYSTEM")
 
-def parralelPicture():
-    global lockThread
-    lockThread = False
-    now = datetime.now().isoformat()
-    sense.clear()
 
-    for i in range(5):
-        os.system("libcamera-still -t 100 -o ./data/Picture/" + str(now.replace(':','-')) + "-" + str(i) + ".jpg --width 1920 --height 1080 --vf --hf")
-        time.sleep(1)
-    lockThread = True
+def read_temp_humidity(retries=5):
+    for _ in range(retries):
+        try:
+            temp, hum = grovepi.dht(temp_humidity_sensor, DHT_TYPE)
+
+            if temp is None or hum is None:
+                time.sleep(1)
+                continue
+
+            if isinstance(temp, float) and math.isnan(temp):
+                time.sleep(1)
+                continue
+
+            if isinstance(hum, float) and math.isnan(hum):
+                time.sleep(1)
+                continue
+
+            return round(temp), round(hum)
+
+        except Exception as e:
+            logging.error('Unable to get DHT temp/humidity: %s', e)
+            time.sleep(1)
+
+    return lastValue['temperature'], lastValue['humidity']
+
+
 def parralelDistanceCheck():
     try:
         touched = False
@@ -75,29 +100,37 @@ def parralelDistanceCheck():
             try:
                 distant = grovepi.ultrasonicRead(ultrasonic_ranger)
             except Exception as e:
-                logging.error('Unable to get distance', e)
+                logging.error('Unable to get distance: %s', e)
                 distant = 65535
 
             if distant < 50:
                 try:
                     distant = grovepi.ultrasonicRead(ultrasonic_ranger)
                 except Exception as e:
-                    logging.error('Unable to get distance', e)
+                    logging.error('Unable to get distance: %s', e)
                     distant = 65535
+
                 if distant < 50:
-                    grovepi.analogWrite(led, 255)
+                    grovepi.digitalWrite(led, 1)
+
                     timing = 1 - ((50 - distant) / 50)
                     if distant <= 5:
                         timing = 0
+                    if timing < 0:
+                        timing = 0
+
                     grovepi.digitalWrite(buzzer_pin, 1)
+
                     if not touched:
                         setRGB(255, 0, 0)
                         setText("Go Back, Don't   Come TOO CLOSE!")
-                        touched =True
+                        touched = True
+
                     time.sleep(.2)
-                    grovepi.analogWrite(led, 0)
+                    grovepi.digitalWrite(led, 0)
                     grovepi.digitalWrite(buzzer_pin, 0)
                     time.sleep(2 * timing)
+
                 else:
                     if touched:
                         setRGB(0, 255, 0)
@@ -108,8 +141,9 @@ def parralelDistanceCheck():
                     setRGB(0, 255, 0)
                     setText("Do not MOVE or   LIFT the SYSTEM")
                     touched = False
+
     except Exception as e:
-        logging.error("sensor returned Error", e)
+        logging.error("sensor returned Error: %s", e)
 
 
 def parralelMoveCheck():
@@ -123,11 +157,24 @@ def parralelMoveCheck():
                 positionZ = position['yaw']
 
             except Exception as e:
-                logging.error('Unable to get position : ', e)
+                logging.error('Unable to get position: %s', e)
                 continue
+
             hasBeenMoved = False
 
-            if (abs(positionZ - lastValue['positionZ']) >= PRECISION['POSITIONZ'] and (abs(positionZ + 360 - lastValue['positionZ']) >= PRECISION['POSITIONZ'] and abs(positionZ - 360 - lastValue['positionZ']) >= PRECISION['POSITIONZ'])) or (abs(positionX - lastValue['positionX']) >= PRECISION['POSITIONX'] and (abs(positionX + 360 - lastValue['positionX']) >= PRECISION['POSITIONX'] and abs(positionX - 360 - lastValue['positionX']) >= PRECISION['POSITIONX'])) or (abs(positionY - lastValue['positionY']) >= PRECISION['POSITIONY'] and (abs(positionY + 360 - lastValue['positionY']) >= PRECISION['POSITIONY'] and abs(positionY - 360 - lastValue['positionY']) >= PRECISION['POSITIONY'])):
+            if (
+                abs(positionZ - lastValue['positionZ']) >= PRECISION['POSITIONZ']
+                and abs(positionZ + 360 - lastValue['positionZ']) >= PRECISION['POSITIONZ']
+                and abs(positionZ - 360 - lastValue['positionZ']) >= PRECISION['POSITIONZ']
+            ) or (
+                abs(positionX - lastValue['positionX']) >= PRECISION['POSITIONX']
+                and abs(positionX + 360 - lastValue['positionX']) >= PRECISION['POSITIONX']
+                and abs(positionX - 360 - lastValue['positionX']) >= PRECISION['POSITIONX']
+            ) or (
+                abs(positionY - lastValue['positionY']) >= PRECISION['POSITIONY']
+                and abs(positionY + 360 - lastValue['positionY']) >= PRECISION['POSITIONY']
+                and abs(positionY - 360 - lastValue['positionY']) >= PRECISION['POSITIONY']
+            ):
                 if not firstMeasure:
                     hasBeenMoved = True
 
@@ -136,13 +183,18 @@ def parralelMoveCheck():
             lastValue['positionZ'] = positionZ
 
             firstMeasure = False
+
             if hasBeenMoved and lockThread:
-                threading.Thread(target=parralelPicture).start()
                 setRGB(255, 0, 0)
-                setText("A picture of the ambient taken!")
+                setText("System has been moved!")
+                time.sleep(2)
+                setRGB(0, 255, 0)
+                setText("Do not MOVE or   LIFT the SYSTEM")
+
             time.sleep(1)
+
     except Exception as e:
-        logging.error('Error in move check : ', e)
+        logging.error('Error in move check: %s', e)
 
 
 threading.Thread(target=parralelDistanceCheck).start()
@@ -152,28 +204,23 @@ threading.Thread(target=parralelMoveCheck).start()
 logging.info('Warm up finished')
 
 while True:
-
     try:
         try:
-            humidity = round(sense.get_humidity())
+            temperature, humidity = read_temp_humidity()
         except Exception as e:
-            logging.error('Unable to get humidity : ', e)
-
-        try:
-            temperature = round(sense.get_temperature())
-        except Exception as e:
-            logging.error('Unable to get temperature : ', e)
+            logging.error('Unable to get DHT readings: %s', e)
 
         try:
             pressure = round(sense.get_pressure())
         except Exception as e:
-            logging.error('Unable to get pressure : ', e)
+            logging.error('Unable to get pressure: %s', e)
+
         try:
             airQuality = grovepi.analogRead(air_sensor)
             if airQuality == 65535:
-                airQuality= lastValue['airQuality']
+                airQuality = lastValue['airQuality']
         except Exception as e:
-            logging.error('Unable to get air quality : ', e)
+            logging.error('Unable to get air quality: %s', e)
 
         valueChanged = False
 
@@ -215,55 +262,9 @@ while True:
                     logging.error(e)
         else:
             print('no value changed')
+
         time.sleep(1)
 
     except KeyboardInterrupt:
         logging.info('end')
         break
-
-
-import grovepi
-import time
-import math
-
-temp_humidity_sensor = 4
-DISTANCE_PORT = 6
-DHT_TYPE = 0   # try 1 first, if needed change to 0
-
-def setup_sensors():
-    pass
-
-def read_temp_humidity(retries=5):
-    for _ in range(retries):
-        try:
-            temp,hum = grovepi.dht(temp_humidity_sensor,0)
-
-            if temp is None or hum is None:
-                time.sleep(1)
-                continue
-
-            if isinstance(temp, float) and math.isnan(temp):
-                time.sleep(1)
-                continue
-
-            if isinstance(hum, float) and math.isnan(hum):
-                time.sleep(1)
-                continue
-
-            return temp, hum
-
-        except Exception as e:
-            print(f"Temp/Humidity read error: {e}")
-            time.sleep(1)
-
-    return None, None
-
-def read_distance():
-    try:
-        distance = grovepi.ultrasonicRead(DISTANCE_PORT)
-        return distance
-    except Exception as e:
-        print(f"Distance read error: {e}")
-        return None
-
-
