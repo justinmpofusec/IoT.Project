@@ -1,0 +1,11 @@
+{
+ "SERVER_IP": "192.168.0.105",
+ "PORT": 8888,
+ "CLIENT_ID": "PI_SENSOR_NODE",
+ "SENSOR_LIST": [
+  "temperature",
+  "humidity",
+  "distance"
+ ]
+}
+
