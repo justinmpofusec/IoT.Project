@@ -1,0 +1,222 @@
+from sense_hat import SenseHat
+from grove_rgb_lcd import *
+import os
+import logging.config
+import pathlib
+import fcntl
+import time
+from datetime import datetime
+import json
+import threading
+import grovepi
+
+air_sensor = 0        #Port for air sensor
+ultrasonic_ranger = 4 #Port for ultrasonic ranger
+led = 5               #Port for LED
+buzzer_pin = 2        #Port for buzzer
+
+grovepi.pinMode(buzzer_pin,"OUTPUT")
+grovepi.pinMode(led,"OUTPUT")
+grovepi.pinMode(air_sensor, "INPUT")
+grovepi.digitalWrite(buzzer_pin,0)
+logging.config.fileConfig("clientLog.conf")
+
+with open('client_conf.json', 'r') as conf:
+    param = json.loads(conf.read())
+
+PRECISION = param['PRECISION']
+"""
+HUMIDITY => in %
+TEMPERATURE => in °C
+PRESSURE => in bar
+AIRQUALITY => a number between 0 and 900, the lower the better
+POSITIONX => in degree
+POSITIONY => in degree
+POSITIONZ => in degree
+"""
+
+sense = SenseHat()
+lastValue = {
+    'humidity': -10000,
+    'temperature': -10000,
+    'pressure': -10000,
+    'airQuality': -10000,
+    'positionX': -10000,
+    'positionY': -10000,
+    'positionZ': -10000
+}
+
+humidity = -10000
+temperature = -10000
+pressure = -10000
+airQuality = -10000
+positionX = -10000
+positionY = -10000
+positionZ = -10000
+lockThread = True
+setRGB(0,255,0)
+setText("Do not MOVE or   LIFT the SYSTEM")
+
+def parralelPicture():
+    global lockThread
+    lockThread = False
+    now = datetime.now().isoformat()
+    sense.clear()
+
+    for i in range(5):
+        os.system("libcamera-still -t 100 -o ./data/Picture/" + str(now.replace(':','-')) + "-" + str(i) + ".jpg --width 1920 --height 1080 --vf --hf")
+        time.sleep(1)
+    lockThread = True
+def parralelDistanceCheck():
+    try:
+        touched = False
+        while True:
+            time.sleep(.2)
+            try:
+                distant = grovepi.ultrasonicRead(ultrasonic_ranger)
+            except Exception as e:
+                logging.error('Unable to get distance', e)
+                distant = 65535
+
+            if distant < 50:
+                try:
+                    distant = grovepi.ultrasonicRead(ultrasonic_ranger)
+                except Exception as e:
+                    logging.error('Unable to get distance', e)
+                    distant = 65535
+                if distant < 50:
+                    grovepi.analogWrite(led, 255)
+                    timing = 1 - ((50 - distant) / 50)
+                    if distant <= 5:
+                        timing = 0
+                    grovepi.digitalWrite(buzzer_pin, 1)
+                    if not touched:
+                        setRGB(255, 0, 0)
+                        setText("Go Back, Don't   Come TOO CLOSE!")
+                        touched =True
+                    time.sleep(.2)
+                    grovepi.analogWrite(led, 0)
+                    grovepi.digitalWrite(buzzer_pin, 0)
+                    time.sleep(2 * timing)
+                else:
+                    if touched:
+                        setRGB(0, 255, 0)
+                        setText("Do not MOVE or   LIFT the SYSTEM")
+                        touched = False
+            else:
+                if touched:
+                    setRGB(0, 255, 0)
+                    setText("Do not MOVE or   LIFT the SYSTEM")
+                    touched = False
+    except Exception as e:
+        logging.error("sensor returned Error", e)
+
+
+def parralelMoveCheck():
+    try:
+        firstMeasure = True
+        while True:
+            try:
+                position = sense.get_gyroscope()
+                positionX = position['pitch']
+                positionY = position['roll']
+                positionZ = position['yaw']
+
+            except Exception as e:
+                logging.error('Unable to get position : ', e)
+                continue
+            hasBeenMoved = False
+
+            if (abs(positionZ - lastValue['positionZ']) >= PRECISION['POSITIONZ'] and (abs(positionZ + 360 - lastValue['positionZ']) >= PRECISION['POSITIONZ'] and abs(positionZ - 360 - lastValue['positionZ']) >= PRECISION['POSITIONZ'])) or (abs(positionX - lastValue['positionX']) >= PRECISION['POSITIONX'] and (abs(positionX + 360 - lastValue['positionX']) >= PRECISION['POSITIONX'] and abs(positionX - 360 - lastValue['positionX']) >= PRECISION['POSITIONX'])) or (abs(positionY - lastValue['positionY']) >= PRECISION['POSITIONY'] and (abs(positionY + 360 - lastValue['positionY']) >= PRECISION['POSITIONY'] and abs(positionY - 360 - lastValue['positionY']) >= PRECISION['POSITIONY'])):
+                if not firstMeasure:
+                    hasBeenMoved = True
+
+            lastValue['positionX'] = positionX
+            lastValue['positionY'] = positionY
+            lastValue['positionZ'] = positionZ
+
+            firstMeasure = False
+            if hasBeenMoved and lockThread:
+                threading.Thread(target=parralelPicture).start()
+                setRGB(255, 0, 0)
+                setText("A picture of the ambient taken!")
+            time.sleep(1)
+    except Exception as e:
+        logging.error('Error in move check : ', e)
+
+
+threading.Thread(target=parralelDistanceCheck).start()
+logging.info('Waiting for all sensor to warm up')
+time.sleep(1)
+threading.Thread(target=parralelMoveCheck).start()
+logging.info('Warm up finished')
+
+while True:
+
+    try:
+        try:
+            humidity = round(sense.get_humidity())
+        except Exception as e:
+            logging.error('Unable to get humidity : ', e)
+
+        try:
+            temperature = round(sense.get_temperature())
+        except Exception as e:
+            logging.error('Unable to get temperature : ', e)
+
+        try:
+            pressure = round(sense.get_pressure())
+        except Exception as e:
+            logging.error('Unable to get pressure : ', e)
+        try:
+            airQuality = grovepi.analogRead(air_sensor)
+            if airQuality == 65535:
+                airQuality= lastValue['airQuality']
+        except Exception as e:
+            logging.error('Unable to get air quality : ', e)
+
+        valueChanged = False
+
+        if abs(humidity - lastValue['humidity']) >= PRECISION['HUMIDITY']:
+            lastValue['humidity'] = humidity
+            valueChanged = True
+
+        if abs(temperature - lastValue['temperature']) >= PRECISION['TEMPERATURE']:
+            lastValue['temperature'] = temperature
+            valueChanged = True
+
+        if abs(pressure - lastValue['pressure']) >= PRECISION['PRESSURE']:
+            lastValue['pressure'] = pressure
+            valueChanged = True
+
+        if abs(airQuality - lastValue['airQuality']) >= PRECISION['AIRQUALITY']:
+            lastValue['airQuality'] = airQuality
+            valueChanged = True
+
+        timestamp = datetime.now().isoformat()
+
+        data = timestamp + ', ' + str(humidity) + ' %rH, ' + str(temperature) + ' C, ' + str(pressure) + ' mbar,' + str(airQuality) + ',0,\n'
+
+        print(data)
+
+        if valueChanged:
+            print('value changed')
+            fileWritten = False
+            while not fileWritten:
+                try:
+                    with open(str(pathlib.Path(__file__).parent.absolute()) + '/data/dataCollectedToSend.csv', 'a') as f:
+                        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        f.write(data)
+                        fcntl.flock(f, fcntl.LOCK_UN)
+                        fileWritten = True
+                except BlockingIOError:
+                    pass
+                except Exception as e:
+                    logging.error(e)
+        else:
+            print('no value changed')
+        time.sleep(1)
+
+    except KeyboardInterrupt:
+        logging.info('end')
+        break
