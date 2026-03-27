@@ -1,0 +1,5 @@
+To start the python server, open a terminal
+Go to the pythonServer folder (PATH on the IOT server VM : /home/iot-server/server/pythonServer/)
+Find the local ip address of your network card with the command ifconfig (see picture 'ip_address_example.jpg', for the iot server Virtual Machine it is 192.168.0.105)
+Write this ip address in the "HOST_IP" field of the server_conf.json file
+In the terminal, run this command to start the server: python3 server.py

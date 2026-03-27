@@ -1,0 +1,23 @@
+Run this following command to install the server (python server and web server)
+Update and upgrade the OS :
+-> sudo apt update
+-> sudo apt upgrade
+
+Install python if needed :
+-> sudo apt install python3
+
+Install python packages :
+-> sudo apt install python3-pip
+-> pip install pyDH
+-> pip install pycryptodomex
+-> pip install python-dotenv
+
+Install web server :
+-> sudo apt install nodejs
+-> sudo apt install npm
+-> cd /home/iot-server/server/webServer/
+(This is the PATH of the webServer file for the Iot server VM, for another server think to modify the path)
+-> npm install
+
+Install a useful tool to know your ip address (required for the python server)
+-> sudo apt install net-tools

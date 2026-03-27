@@ -1,0 +1,4 @@
+To start the web server, open a terminal
+Go to the webServer folder (PATH on the Iot server VM : /home/iot-server/server/webServer/)
+Run this command to install the webServer (only the first time) : npm install
+Run this command to start the webServer : node server.js

@@ -1,0 +1,16 @@
+{
+  "SERVER_IP": "192.168.0.105",
+  "PORT": 8888,
+  "UUID_CLIENT":  "e1ab5776b0f1fe89e94f194c30fff1d8",
+  "SENSOR_LIST": ["macAddress","sending_timestamp","save_timestamp","humidity","temperature","pressure","airQuality"],
+  "PRECISION": {
+    "HUMIDITY": 1,
+    "TEMPERATURE": 1,
+    "PRESSURE": 10,
+    "AIRQUALITY": 15,
+    "POSITIONX" : 10,
+    "POSITIONY" : 10,
+    "POSITIONZ" : 10
+  },
+  "NAME": "ambient 1 monitoring  py 1"
+}
